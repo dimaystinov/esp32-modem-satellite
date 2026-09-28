@@ -44,6 +44,8 @@ void MavlinkUploader::deinit() {
 }
 
 void MavlinkUploader::resetState() {
+    activation_ = Activation::Idle;
+    activationError_ = "";
     state_ = MissionUploadState::IDLE;
     sentCount_ = 0;
     totalCount_ = 0;
@@ -60,6 +62,7 @@ bool MavlinkUploader::isConnected() const {
 }
 void MavlinkUploader::clearLink() {
     while (mavSerial.available()) mavSerial.read();
+    activation_ = Activation::Idle; autoMode_ = -1; armed_ = false; customMode_ = 0;
     targetSysId_ = 0; targetCompId_ = 0; lastHeartbeat_ = 0; rxLen_ = 0;
     mavlink_reset_channel_status(MAVLINK_COMM_0);
 }
@@ -125,6 +128,12 @@ void MavlinkUploader::processMavlink() {
                     handleMissionAck(reinterpret_cast<const uint8_t*>(&msg), MAVLINK_MAX_PACKET_LEN);
                     break;
 
+                case MAVLINK_MSG_ID_COMMAND_ACK:
+                    handleCommandAck(reinterpret_cast<const uint8_t*>(&msg), sizeof(msg));
+                    break;
+                case MAVLINK_MSG_ID_STATUSTEXT:
+                    handleStatusText(reinterpret_cast<const uint8_t*>(&msg), sizeof(msg));
+                    break;
                 default:
                     break;
             }
@@ -147,6 +156,40 @@ void MavlinkUploader::handleHeartbeat(const uint8_t* data, size_t len) {
     if (targetSysId_ != 0 && (msg.sysid != targetSysId_ || msg.compid != targetCompId_)) return;
     lastHeartbeat_ = millis();
     heartbeatCount_++;
+    customMode_ = mavlink_msg_heartbeat_get_custom_mode(&msg);
+    const uint8_t baseMode = mavlink_msg_heartbeat_get_base_mode(&msg);
+    armed_ = (baseMode & MAV_MODE_FLAG_SAFETY_ARMED) != 0;
+    autoMode_ = -1;
+    if (mavlink_msg_heartbeat_get_autopilot(&msg) == MAV_AUTOPILOT_ARDUPILOTMEGA) {
+        switch (mavlink_msg_heartbeat_get_type(&msg)) {
+            case MAV_TYPE_QUADROTOR: case MAV_TYPE_COAXIAL: case MAV_TYPE_HELICOPTER:
+            case MAV_TYPE_HEXAROTOR: case MAV_TYPE_OCTOROTOR: case MAV_TYPE_TRICOPTER:
+            case MAV_TYPE_DODECAROTOR: case MAV_TYPE_DECAROTOR:
+                autoMode_ = 3; break; // ArduCopter AUTO
+            case MAV_TYPE_FIXED_WING: case MAV_TYPE_VTOL_TAILSITTER_DUOROTOR:
+            case MAV_TYPE_VTOL_TAILSITTER_QUADROTOR: case MAV_TYPE_VTOL_TILTROTOR:
+            case MAV_TYPE_VTOL_FIXEDROTOR: case MAV_TYPE_VTOL_TAILSITTER: case MAV_TYPE_VTOL_TILTWING:
+            case MAV_TYPE_GROUND_ROVER: case MAV_TYPE_SURFACE_BOAT:
+                autoMode_ = 10; break; // ArduPlane / Rover AUTO
+            default: break;
+        }
+    }
+    const bool inAuto = autoMode_ >= 0 && customMode_ == uint32_t(autoMode_) &&
+                        (baseMode & MAV_MODE_FLAG_CUSTOM_MODE_ENABLED);
+    // A fresh heartbeat AFTER COMMAND_ACK confirms the actual state.
+    if (activation_ == Activation::SettingAuto && commandAccepted_ && inAuto) {
+        activation_ = Activation::Arming;
+        activationAt_ = millis(); commandAccepted_ = false; commandResult_ = -1;
+        if (!sendActivationCommand(MAV_CMD_COMPONENT_ARM_DISARM, 1, 0))
+            failActivation("ARM UART write failed");
+    } else if (activation_ == Activation::Arming) {
+        if (!inAuto) failActivation("Vehicle left AUTO during ARM");
+        else if (commandAccepted_ && armed_) {
+            activation_ = Activation::Complete;
+            g_logger.appendStatus("AUTO + ARMED confirmed by heartbeat");
+        }
+    }
+
 
     // Запоминаем sysid/compid при первом heartbeat
     if (targetSysId_ == 0) {
@@ -170,6 +213,11 @@ void MavlinkUploader::handleMissionRequest(const uint8_t* data, size_t len) {
 
     mavlink_mission_request_t req;
     mavlink_msg_mission_request_decode(&msg, &req);
+    if (msg.sysid != targetSysId_ || msg.compid != targetCompId_ ||
+        (req.target_system != 0 && req.target_system != MAVLINK_SYS_ID) ||
+        (req.target_component != 0 && req.target_component != MAVLINK_COMP_ID) ||
+        req.mission_type != MAV_MISSION_TYPE_MISSION) return;
+
 
     if (g_logger.getStatus()) {
         g_logger.appendStatusF("Mission request: seq=%u", req.seq);
@@ -198,6 +246,11 @@ void MavlinkUploader::handleMissionRequestInt(const uint8_t* data, size_t len) {
 
     mavlink_mission_request_int_t req;
     mavlink_msg_mission_request_int_decode(&msg, &req);
+    if (msg.sysid != targetSysId_ || msg.compid != targetCompId_ ||
+        (req.target_system != 0 && req.target_system != MAVLINK_SYS_ID) ||
+        (req.target_component != 0 && req.target_component != MAVLINK_COMP_ID) ||
+        req.mission_type != MAV_MISSION_TYPE_MISSION) return;
+
 
     if (g_logger.getStatus()) {
         g_logger.appendStatusF("Mission request INT: seq=%u", req.seq);
@@ -228,6 +281,9 @@ void MavlinkUploader::handleMissionAck(const uint8_t* data, size_t len) {
         msg.sysid != targetSysId_ || msg.compid != targetCompId_) return;
     mavlink_mission_ack_t ack;
     mavlink_msg_mission_ack_decode(&msg, &ack);
+    if ((ack.target_system != 0 && ack.target_system != MAVLINK_SYS_ID) ||
+        (ack.target_component != 0 && ack.target_component != MAVLINK_COMP_ID) ||
+        ack.mission_type != MAV_MISSION_TYPE_MISSION) return;
 
     if (g_logger.getStatus()) {
         g_logger.appendStatusF("Mission ACK: type=%u", ack.type);
@@ -240,6 +296,7 @@ void MavlinkUploader::handleMissionAck(const uint8_t* data, size_t len) {
         if (onComplete_) {
             onComplete_(true);
         }
+        startActivation();
     } else {
         state_ = MissionUploadState::ERROR;
         uploadStartTime_ = 0;
@@ -254,6 +311,7 @@ void MavlinkUploader::handleMissionAck(const uint8_t* data, size_t len) {
 // ============================================================================
 
 bool MavlinkUploader::startUpload() {
+    if (activationBusy() || state_ == MissionUploadState::WAIT_REQUEST || state_ == MissionUploadState::SENDING) return false;
     if (!isConnected()) {
         if (g_logger.getStatus()) {
             g_logger.appendStatus("Cannot upload: no vehicle detected");
@@ -269,7 +327,10 @@ bool MavlinkUploader::startUpload() {
         return false;
     }
 
+    activation_ = Activation::Idle; activationError_ = ""; commandResult_ = -1;
+    vehicleText_[0] = '\0';
     totalCount_ = waypoints.size();
+    sentItems_.assign(totalCount_, false);
     sentCount_ = 0;
     state_ = MissionUploadState::WAIT_REQUEST;
     uploadStartTime_ = millis();
@@ -283,6 +344,7 @@ bool MavlinkUploader::startUpload() {
 }
 
 void MavlinkUploader::stopUpload() {
+    if (activationBusy()) activation_ = Activation::Cancelled;
     state_ = MissionUploadState::IDLE;
     sentCount_ = 0;
 }
@@ -341,7 +403,7 @@ bool MavlinkUploader::sendMissionItem(uint16_t seq) {
     size_t sent = mavSerial.write(buf, len);
 
     if (sent == len) {
-        sentCount_ = seq + 1;
+        if (!sentItems_[seq]) { sentItems_[seq] = true; ++sentCount_; }
 
         if (g_logger.getStatus()) {
             g_logger.appendStatusF("Sent item %u/%u", sentCount_, totalCount_);
@@ -358,6 +420,11 @@ bool MavlinkUploader::sendMissionItem(uint16_t seq) {
 // ============================================================================
 
 void MavlinkUploader::checkTimeout() {
+    if (activationBusy()) {
+        if (!isConnected()) failActivation("Heartbeat lost during AUTO/ARM");
+        else if (uint32_t(millis()-activationAt_) >= 30000)
+            failActivation(activation_ == Activation::SettingAuto ? "AUTO confirmation timeout" : "ARM confirmation timeout");
+    }
     if (state_ == MissionUploadState::IDLE ||
         state_ == MissionUploadState::DONE ||
         state_ == MissionUploadState::ERROR) {
@@ -382,4 +449,59 @@ uint8_t MavlinkUploader::getProgress() const {
     if (totalCount_ == 0) return 0;
     if (state_ == MissionUploadState::DONE) return 100;
     return (sentCount_ * 100) / totalCount_;
+}
+
+
+const char* MavlinkUploader::activationName() const {
+    switch (activation_) {
+        case Activation::Idle: return "idle";
+        case Activation::SettingAuto: return "setting_auto";
+        case Activation::Arming: return "arming";
+        case Activation::Complete: return "complete";
+        case Activation::Error: return "error";
+        default: return "cancelled";
+    }
+}
+void MavlinkUploader::failActivation(const char* reason) {
+    activation_ = Activation::Error; activationError_ = reason;
+    g_logger.appendStatus(reason);
+}
+void MavlinkUploader::startActivation() {
+    if (!isConnected()) { failActivation("No fresh heartbeat for AUTO"); return; }
+    if (autoMode_ < 0) { failActivation("Unsupported autopilot/vehicle type for AUTO"); return; }
+    activation_ = Activation::SettingAuto;
+    activationAt_ = millis(); commandAccepted_ = false; commandResult_ = -1;
+    activationError_ = ""; vehicleText_[0] = '\0';
+    if (!sendActivationCommand(MAV_CMD_DO_SET_MODE, MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, autoMode_))
+        failActivation("AUTO UART write failed");
+}
+bool MavlinkUploader::sendActivationCommand(uint16_t command, float param1, float param2) {
+    mavlink_message_t msg;
+    uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+    mavlink_msg_command_long_pack(MAVLINK_SYS_ID, MAVLINK_COMP_ID, &msg,
+        targetSysId_, targetCompId_, command, 0, param1, param2, 0, 0, 0, 0, 0);
+    const auto len = mavlink_msg_to_send_buffer(buf, &msg);
+    g_logger.appendStatusF("Sending command %u to %u/%u", command, targetSysId_, targetCompId_);
+    return mavSerial.write(buf, len) == len;
+}
+void MavlinkUploader::handleCommandAck(const uint8_t* data, size_t) {
+    const auto& msg = *reinterpret_cast<const mavlink_message_t*>(data);
+    if (!activationBusy() || msg.sysid != targetSysId_ || msg.compid != targetCompId_) return;
+    mavlink_command_ack_t ack;
+    mavlink_msg_command_ack_decode(&msg, &ack);
+    const auto expected = activation_ == Activation::SettingAuto ? MAV_CMD_DO_SET_MODE : MAV_CMD_COMPONENT_ARM_DISARM;
+    if (ack.command != expected ||
+        (ack.target_system != 0 && ack.target_system != MAVLINK_SYS_ID) ||
+        (ack.target_component != 0 && ack.target_component != MAVLINK_COMP_ID)) return;
+    commandResult_ = ack.result;
+    if (ack.result == MAV_RESULT_ACCEPTED) commandAccepted_ = true;
+    else if (ack.result != MAV_RESULT_IN_PROGRESS)
+        failActivation(activation_ == Activation::SettingAuto ? "AUTO rejected: see COMMAND_ACK result / vehicle text" : "ARM rejected: see COMMAND_ACK result / vehicle text");
+}
+void MavlinkUploader::handleStatusText(const uint8_t* data, size_t) {
+    const auto& msg = *reinterpret_cast<const mavlink_message_t*>(data);
+    if (msg.sysid != targetSysId_ || msg.compid != targetCompId_) return;
+    mavlink_statustext_t status;
+    mavlink_msg_statustext_decode(&msg, &status);
+    memcpy(vehicleText_, status.text, 50); vehicleText_[50] = '\0';
 }

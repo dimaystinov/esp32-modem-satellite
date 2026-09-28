@@ -16,8 +16,8 @@ static const char INDEX_HTML[] = R"WEB(<!doctype html>
     </header>
 
     <section class="actions">
-      <button id="btn-upload">Start Upload</button>
-      <button id="btn-stop">Stop Upload</button>
+      <button id="btn-upload">Upload → AUTO → ARM</button>
+      <button id="btn-stop">Stop sequence</button>
       <button id="btn-echo">Echo: OFF</button>
       <button id="btn-raw">Mission Raw</button>
       <button id="btn-mission-clear" class="danger">Clear Mission</button>
@@ -223,7 +223,14 @@ async function request(path, opts = {}) {
 function renderStatus(j) {
   $("switch-state").textContent = (j.switch.enabled ? "Включён" : "Выключен") + " · GPIO4 " + (j.switch.level ? "HIGH" : "LOW");
   const names = {waiting_mission:"Ожидание нового задания: питание выключено",waiting_heartbeat:"Питание включено: ожидание heartbeat полётника",uploading:"Загрузка миссии в полётник",complete:"Полётник подтвердил приём миссии",error:"Ошибка загрузки: питание остаётся включённым",cancelled:"Загрузка отменена: питание остаётся включённым"};
+  const activationNames = {idle:"ожидание приёма миссии",setting_auto:"ожидание AUTO",arming:"ожидание ARM",complete:"AUTO и ARM подтверждены",error:"ошибка",cancelled:"отменено"};
+  const results = {0:"ACCEPTED",1:"TEMPORARILY_REJECTED",2:"DENIED",3:"UNSUPPORTED",4:"FAILED",5:"IN_PROGRESS",6:"CANCELLED"};
   $("sequence").textContent = [names[j.sequence.stage] || j.sequence.stage,
+    "AUTO → ARM: " + (activationNames[j.activation?.stage] || "ожидание"),
+    "Режим / ARM (heartbeat): " + (j.mavlink.connected ? j.mavlink.customMode + " / " + (j.mavlink.armed ? "ARMED" : "DISARMED") : "неизвестно"),
+    j.activation?.error || "",
+    j.activation?.commandResult >= 0 ? "COMMAND_ACK: " + (results[j.activation.commandResult] || j.activation.commandResult) : "",
+    j.activation?.vehicleText ? "Полётник: " + j.activation.vehicleText : "",
     "Задание принято в этом запуске: " + bool(j.sequence.acceptedThisBoot),
     "Питание включено: " + Math.floor(j.sequence.poweredForMs/1000) + " с",
     "Связь с полётником: " + (j.mavlink.connected ? "есть" : "нет"),
@@ -234,7 +241,7 @@ function renderStatus(j) {
   $("wifi-details").textContent = j.wifi.ssid + " · клиентов: " + j.wifi.clients + " · DNS: " + (j.wifi.dns_enabled ? j.wifi.dns_name : "недоступен");
   wifiDeadline = performance.now() + j.wifi.remaining_ms;
   updateCountdown();
-  ui.btnUpload.disabled = !j.sequence.acceptedThisBoot || !j.mavlink.connected || j.sequence.stage === "uploading";
+  ui.btnUpload.disabled = !j.sequence.acceptedThisBoot || !j.mavlink.connected || j.sequence.stage === "uploading" || !!j.activation?.busy;
   ui.stamp.textContent = nowStamp();
 
   ui.status.textContent = [

@@ -23,6 +23,18 @@ public:
      * @brief Callback при завершении загрузки
      * @param success true если успешно
      */
+    enum class Activation { Idle, SettingAuto, Arming, Complete, Error, Cancelled };
+    void resetActivation() { if (!activationBusy()) { activation_ = Activation::Idle; activationError_ = ""; commandResult_ = -1; vehicleText_[0] = 0; } }
+    Activation activation() const { return activation_; }
+    bool activationBusy() const { return activation_ == Activation::SettingAuto || activation_ == Activation::Arming; }
+    const char* activationName() const;
+    const char* activationError() const { return activationError_; }
+    const char* vehicleText() const { return vehicleText_; }
+    int commandResult() const { return commandResult_; }
+    uint32_t customMode() const { return customMode_; }
+    bool armed() const { return armed_; }
+    int autoMode() const { return autoMode_; }
+
     using OnUploadComplete = void (*)(bool success);
 
     /**
@@ -110,6 +122,18 @@ public:
     uint32_t getLastHeartbeat() const { return lastHeartbeat_; }
 
 private:
+    Activation activation_ = Activation::Idle;
+    uint32_t activationAt_ = 0, customMode_ = 0;
+    bool armed_ = false, commandAccepted_ = false;
+    int autoMode_ = -1, commandResult_ = -1;
+    const char* activationError_ = "";
+    char vehicleText_[51] = {};
+    std::vector<bool> sentItems_;
+    void startActivation();
+    void failActivation(const char* reason);
+    bool sendActivationCommand(uint16_t command, float param1, float param2);
+    void handleCommandAck(const uint8_t* data, size_t len);
+    void handleStatusText(const uint8_t* data, size_t len);
     uint32_t rxBytes_ = 0, lastByteTime_ = 0;
     // UART
     uint8_t rxPin_ = 17;

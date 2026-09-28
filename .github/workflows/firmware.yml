@@ -18,8 +18,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: python3 scripts/test.py
       - run: python3 scripts/setup.py
+      - run: python3 scripts/test.py
       - run: python3 scripts/build.py
       - name: Package
         run: python3 scripts/package_release.py "${GITHUB_REF_NAME/#main/v0.0.0}"
@@ -51,4 +51,4 @@ jobs:
             echo "Release already published; keeping its verified assets."
             exit 0
           fi
-          gh release create "$TAG" artifacts/dist/"$TAG"/* --verify-tag --title "Modem Satellite C3 $TAG" --notes 'ESP32-C3 4 MB. Full image: offset 0x0. Wi-Fi modem_bridge / 00000000, http://192.168.0.4. See FLASHING.md and README. Software-tested; hardware validation pending.'
+          gh release create "$TAG" artifacts/dist/"$TAG"/* --verify-tag --title "Modem Satellite C3 $TAG" --notes-file artifacts/dist/"$TAG"/RELEASE_NOTES.md

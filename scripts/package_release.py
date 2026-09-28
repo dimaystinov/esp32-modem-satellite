@@ -16,6 +16,7 @@ for suffix,offset in [('bootloader',0),('partitions',0x8000),('app',0x10000)]:
     shutil.copyfile(src,out/f'{prefix}-{suffix}.bin')
 shutil.copyfile(build/'modem_c3.ino.merged.bin',out/f'{prefix}-full.bin')
 shutil.copyfile(root/'docs/FLASHING.md',out/'FLASHING.md')
+shutil.copyfile(root/'docs/RELEASE_NOTES.md',out/'RELEASE_NOTES.md')
 source=subprocess.check_output(['git','ls-files','-z'],cwd=root).decode().split('\0')
 with zipfile.ZipFile(out/f'{prefix}-kit.zip','w',zipfile.ZIP_DEFLATED) as z:
     for path in filter(None,source): z.write(root/path,f'{prefix}/{path}')

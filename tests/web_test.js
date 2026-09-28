@@ -9,4 +9,9 @@ assert(nodes['switch-state'].textContent.includes('LOW'));assert(nodes['btn-uplo
 clock=1000;vm.runInContext('updateCountdown()',ctx);assert(nodes['wifi-countdown'].textContent.includes('4:59'));
 ctx.sample.switch={enabled:true,level:1};ctx.sample.sequence={stage:'waiting_heartbeat',acceptedThisBoot:true,poweredForMs:31000,waitingLong:true};
 vm.runInContext('renderStatus(sample)',ctx);assert(nodes.sequence.textContent.includes('Ожидание продолжается'));assert(nodes['switch-state'].textContent.includes('HIGH'));
+ctx.sample.mavlink={connected:true,heartbeatCount:5,rxBytes:100,customMode:3,armed:false};
+ctx.sample.activation={stage:'arming',busy:true,commandResult:0};
+vm.runInContext('renderStatus(sample)',ctx);assert(nodes.sequence.textContent.includes('ожидание ARM'));assert(nodes['btn-upload'].disabled);
+ctx.sample.activation={stage:'error',busy:false,error:'ARM rejected',commandResult:2,vehicleText:'PreArm: GPS'};
+vm.runInContext('renderStatus(sample)',ctx);assert(nodes.sequence.textContent.includes('DENIED'));assert(nodes.sequence.textContent.includes('PreArm: GPS'));
 (async()=>{await vm.runInContext('refreshStatus()',ctx);assert(nodes['switch-state'].textContent.includes('неизвестно'));assert(nodes['btn-upload'].disabled);console.log('PASS: sequence UI, GPIO, AP countdown, stale state on HTTP failure');})().catch(e=>{console.error(e);process.exit(1)});

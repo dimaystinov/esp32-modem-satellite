@@ -202,7 +202,7 @@ void WebUi::handleSwitch() {
 void WebUi::handleStatus() {
     WebServer* srv = static_cast<WebServer*>(server_);
 
-    StaticJsonDocument<4096> doc;
+    StaticJsonDocument<5120> doc;
 
     JsonObject wifi = doc.createNestedObject("wifi");
     wifi["connected"] = g_wifiManager.isConnected();
@@ -227,6 +227,15 @@ void WebUi::handleStatus() {
     mavlink["heartbeatCount"] = g_mavlinkUploader.getHeartbeatCount();
 
     mavlink["heartbeatAgeMs"] = g_mavlinkUploader.getHeartbeatCount() ? uint32_t(millis()-g_mavlinkUploader.getLastHeartbeat()) : 0;
+    mavlink["customMode"] = g_mavlinkUploader.customMode();
+    mavlink["autoMode"] = g_mavlinkUploader.autoMode();
+    mavlink["armed"] = g_mavlinkUploader.armed();
+    JsonObject activation = doc.createNestedObject("activation");
+    activation["stage"] = g_mavlinkUploader.activationName();
+    activation["busy"] = g_mavlinkUploader.activationBusy();
+    activation["error"] = g_mavlinkUploader.activationError();
+    activation["commandResult"] = g_mavlinkUploader.commandResult();
+    activation["vehicleText"] = g_mavlinkUploader.vehicleText();
     JsonObject sequence = doc.createNestedObject("sequence");
     sequence["stage"] = g_power.name();
     sequence["acceptedThisBoot"] = g_power.accepted;
@@ -358,7 +367,7 @@ void WebUi::handleLogsClear() {
 
 void WebUi::handleUploadStart() {
     if (!g_power.accepted || !g_switch.enabled()) { sendError("Waiting for a new valid modem mission",409); return; }
-    if (g_power.stage == PowerWorkflow::Stage::Uploading) { sendError("Upload already running",409); return; }
+    if (g_power.stage == PowerWorkflow::Stage::Uploading || g_mavlinkUploader.activationBusy()) { sendError("Upload already running",409); return; }
     if (g_missionStore.getCount() == 0) {
         sendError("No mission loaded");
         return;

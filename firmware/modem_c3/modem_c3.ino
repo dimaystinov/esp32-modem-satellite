@@ -254,7 +254,7 @@ void loop() {
 // ============================================================================
 
 bool onFrameReceived(const uint8_t* payload, size_t len) {
-    if (g_power.stage == PowerWorkflow::Stage::Uploading) {
+    if (g_power.stage == PowerWorkflow::Stage::Uploading || g_mavlinkUploader.activationBusy()) {
         g_logger.appendStatus("New mission rejected: upload in progress");
         return false;
     }
@@ -287,6 +287,7 @@ bool onFrameReceived(const uint8_t* payload, size_t len) {
                 snprintf(msg, sizeof(msg), "Mission: %d pts", waypoints.size());
                 g_display.showMessage(msg, 3000);
 
+                g_mavlinkUploader.resetActivation();
                 g_power.missionSaved(millis(), g_mavlinkUploader.getHeartbeatCount());
                 if (!g_switch.enabled()) g_mavlinkUploader.clearLink();
                 g_switch.set(true);
