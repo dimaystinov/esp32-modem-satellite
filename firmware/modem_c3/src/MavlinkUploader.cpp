@@ -11,6 +11,7 @@
 #include <Arduino.h>
 #include <MAVLink.h>
 #include <HardwareSerial.h>
+#include <cmath>
 static HardwareSerial mavSerial(0);
 
 // Глобальный экземпляр
@@ -128,6 +129,9 @@ void MavlinkUploader::processMavlink() {
                     handleMissionAck(reinterpret_cast<const uint8_t*>(&msg), MAVLINK_MAX_PACKET_LEN);
                     break;
 
+                case MAVLINK_MSG_ID_PARAM_VALUE:
+                    handleParamValue(reinterpret_cast<const uint8_t*>(&msg), sizeof(msg));
+                    break;
                 case MAVLINK_MSG_ID_COMMAND_ACK:
                     handleCommandAck(reinterpret_cast<const uint8_t*>(&msg), sizeof(msg));
                     break;
@@ -332,6 +336,19 @@ bool MavlinkUploader::startUpload() {
     totalCount_ = waypoints.size();
     sentItems_.assign(totalCount_, false);
     sentCount_ = 0;
+    optionsBefore_ = optionsVerified_ = optionsDesired_ = -1;
+    state_ = MissionUploadState::IDLE;
+    if (autoMode_ == 3) { // Only ArduCopter uses this AUTO_OPTIONS bit for arming.
+        activation_ = Activation::ReadingOptions;
+        activationAt_ = millis(); optionsReadAttempts_ = 0;
+        if (!requestAutoOptions()) { failActivation("AUTO_OPTIONS read UART write failed"); return false; }
+        return true;
+    }
+    return beginMissionTransfer();
+}
+
+bool MavlinkUploader::beginMissionTransfer() {
+    activation_ = Activation::Idle;
     state_ = MissionUploadState::WAIT_REQUEST;
     uploadStartTime_ = millis();
 
@@ -420,6 +437,15 @@ bool MavlinkUploader::sendMissionItem(uint16_t seq) {
 // ============================================================================
 
 void MavlinkUploader::checkTimeout() {
+    if (optionsBusy()) {
+        if (!isConnected()) failActivation("Heartbeat lost while configuring AUTO_OPTIONS");
+        else if (uint32_t(millis()-activationAt_) >= 10000)
+            failActivation("AUTO_OPTIONS response/verification timeout");
+        else if (activation_ != Activation::WritingOptions && optionsReadAttempts_ < 3 && uint32_t(millis()-optionsReadAt_) >= 2000) {
+            if (!requestAutoOptions()) failActivation("AUTO_OPTIONS read UART write failed");
+        }
+        return;
+    }
     if (activationBusy()) {
         if (!isConnected()) failActivation("Heartbeat lost during AUTO/ARM");
         else if (uint32_t(millis()-activationAt_) >= 30000)
@@ -454,6 +480,9 @@ uint8_t MavlinkUploader::getProgress() const {
 
 const char* MavlinkUploader::activationName() const {
     switch (activation_) {
+        case Activation::ReadingOptions: return "reading_options";
+        case Activation::WritingOptions: return "writing_options";
+        case Activation::VerifyingOptions: return "verifying_options";
         case Activation::Idle: return "idle";
         case Activation::SettingAuto: return "setting_auto";
         case Activation::Arming: return "arming";
@@ -463,8 +492,10 @@ const char* MavlinkUploader::activationName() const {
     }
 }
 void MavlinkUploader::failActivation(const char* reason) {
+    const bool preparing = optionsBusy();
     activation_ = Activation::Error; activationError_ = reason;
     g_logger.appendStatus(reason);
+    if (preparing) { state_ = MissionUploadState::ERROR; if (onComplete_) onComplete_(false); }
 }
 void MavlinkUploader::startActivation() {
     if (!isConnected()) { failActivation("No fresh heartbeat for AUTO"); return; }
@@ -486,7 +517,7 @@ bool MavlinkUploader::sendActivationCommand(uint16_t command, float param1, floa
 }
 void MavlinkUploader::handleCommandAck(const uint8_t* data, size_t) {
     const auto& msg = *reinterpret_cast<const mavlink_message_t*>(data);
-    if (!activationBusy() || msg.sysid != targetSysId_ || msg.compid != targetCompId_) return;
+    if ((activation_ != Activation::SettingAuto && activation_ != Activation::Arming) || msg.sysid != targetSysId_ || msg.compid != targetCompId_) return;
     mavlink_command_ack_t ack;
     mavlink_msg_command_ack_decode(&msg, &ack);
     const auto expected = activation_ == Activation::SettingAuto ? MAV_CMD_DO_SET_MODE : MAV_CMD_COMPONENT_ARM_DISARM;
@@ -504,4 +535,62 @@ void MavlinkUploader::handleStatusText(const uint8_t* data, size_t) {
     mavlink_statustext_t status;
     mavlink_msg_statustext_decode(&msg, &status);
     memcpy(vehicleText_, status.text, 50); vehicleText_[50] = '\0';
+}
+
+
+bool MavlinkUploader::requestAutoOptions() {
+    mavlink_message_t msg;
+    uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+    static const char id[16] = "AUTO_OPTIONS";
+    mavlink_msg_param_request_read_pack(MAVLINK_SYS_ID, MAVLINK_COMP_ID, &msg,
+        targetSysId_, targetCompId_, id, -1);
+    const auto len = mavlink_msg_to_send_buffer(buf, &msg);
+    optionsReadAt_ = millis(); ++optionsReadAttempts_;
+    return mavSerial.write(buf, len) == len;
+}
+void MavlinkUploader::handleParamValue(const uint8_t* data, size_t) {
+    const auto& msg = *reinterpret_cast<const mavlink_message_t*>(data);
+    if (!optionsBusy() || msg.sysid != targetSysId_ || msg.compid != targetCompId_) return;
+    mavlink_param_value_t param;
+    mavlink_msg_param_value_decode(&msg, &param);
+    static const char id[16] = "AUTO_OPTIONS";
+    if (strncmp(param.param_id, id, sizeof(id)) != 0) return;
+    // ArduPilot uses numeric float conversion (not byte-wise encoding).
+    // Reject values that cannot preserve every bit when setting bit 0 in float32.
+    if ((param.param_type != MAV_PARAM_TYPE_INT8 && param.param_type != MAV_PARAM_TYPE_INT16 && param.param_type != MAV_PARAM_TYPE_INT32) ||
+        !std::isfinite(param.param_value) || param.param_value < 0 || param.param_value > 16777215.0f ||
+        std::floor(param.param_value) != param.param_value) {
+        failActivation("Invalid AUTO_OPTIONS type/value"); return;
+    }
+    const int32_t value = static_cast<int32_t>(param.param_value);
+    if (activation_ == Activation::ReadingOptions) {
+        optionsBefore_ = value; optionsType_ = param.param_type;
+        if ((value & 1) != 0) {
+            optionsVerified_ = value;
+            if (!beginMissionTransfer()) { failActivation("MISSION_COUNT UART write failed"); if (onComplete_) onComplete_(false); }
+            return;
+        }
+        if (armed_) { failActivation("Cannot change AUTO_OPTIONS while armed"); return; }
+        optionsDesired_ = value | 1; // Preserve takeoff, yaw and all other option bits.
+        activation_ = Activation::WritingOptions; activationAt_ = millis();
+        mavlink_message_t set;
+        uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+        mavlink_msg_param_set_pack(MAVLINK_SYS_ID, MAVLINK_COMP_ID, &set,
+            targetSysId_, targetCompId_, id, static_cast<float>(optionsDesired_), optionsType_);
+        const auto len = mavlink_msg_to_send_buffer(buf, &set);
+        g_logger.appendStatusF("AUTO_OPTIONS: %ld -> %ld", long(value), long(optionsDesired_));
+        if (mavSerial.write(buf, len) != len) failActivation("AUTO_OPTIONS set UART write failed");
+        return;
+    }
+    if (value != optionsDesired_ || param.param_type != optionsType_) {
+        failActivation("AUTO_OPTIONS write/readback mismatch"); return;
+    }
+    if (activation_ == Activation::WritingOptions) {
+        // PARAM_SET acknowledgement is not enough: explicitly request readback.
+        activation_ = Activation::VerifyingOptions; activationAt_ = millis(); optionsReadAttempts_ = 0;
+        if (!requestAutoOptions()) failActivation("AUTO_OPTIONS verification UART write failed");
+    } else {
+        optionsVerified_ = value;
+        if (!beginMissionTransfer()) { failActivation("MISSION_COUNT UART write failed"); if (onComplete_) onComplete_(false); }
+    }
 }

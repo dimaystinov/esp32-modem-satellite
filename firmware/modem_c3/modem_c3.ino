@@ -233,7 +233,7 @@ void loop() {
     if (g_power.ready(g_mavlinkUploader.isConnected(), g_mavlinkUploader.getHeartbeatCount())) {
         bool ok = g_mavlinkUploader.startUpload();
         g_power.started(ok);
-        g_logger.appendStatus(ok ? "FC heartbeat received; mission upload started" : "Mission upload could not start");
+        g_logger.appendStatus(ok ? "FC heartbeat received; preparation/upload started" : "Mission upload could not start");
     }
 
     // 4. Обновление дисплея

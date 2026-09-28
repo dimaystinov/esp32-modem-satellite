@@ -231,6 +231,8 @@ void WebUi::handleStatus() {
     mavlink["autoMode"] = g_mavlinkUploader.autoMode();
     mavlink["armed"] = g_mavlinkUploader.armed();
     JsonObject activation = doc.createNestedObject("activation");
+    activation["autoOptionsBefore"] = g_mavlinkUploader.autoOptionsBefore();
+    activation["autoOptionsVerified"] = g_mavlinkUploader.autoOptionsVerified();
     activation["stage"] = g_mavlinkUploader.activationName();
     activation["busy"] = g_mavlinkUploader.activationBusy();
     activation["error"] = g_mavlinkUploader.activationError();

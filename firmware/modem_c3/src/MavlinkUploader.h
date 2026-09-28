@@ -23,10 +23,13 @@ public:
      * @brief Callback при завершении загрузки
      * @param success true если успешно
      */
-    enum class Activation { Idle, SettingAuto, Arming, Complete, Error, Cancelled };
-    void resetActivation() { if (!activationBusy()) { activation_ = Activation::Idle; activationError_ = ""; commandResult_ = -1; vehicleText_[0] = 0; } }
+    enum class Activation { ReadingOptions, WritingOptions, VerifyingOptions, Idle, SettingAuto, Arming, Complete, Error, Cancelled };
+    void resetActivation() { if (!activationBusy()) { activation_ = Activation::Idle; activationError_ = ""; commandResult_ = -1; vehicleText_[0] = 0; optionsBefore_ = optionsVerified_ = -1; } }
     Activation activation() const { return activation_; }
-    bool activationBusy() const { return activation_ == Activation::SettingAuto || activation_ == Activation::Arming; }
+    bool activationBusy() const { return optionsBusy() || activation_ == Activation::SettingAuto || activation_ == Activation::Arming; }
+    bool optionsBusy() const { return activation_ == Activation::ReadingOptions || activation_ == Activation::WritingOptions || activation_ == Activation::VerifyingOptions; }
+    int32_t autoOptionsBefore() const { return optionsBefore_; }
+    int32_t autoOptionsVerified() const { return optionsVerified_; }
     const char* activationName() const;
     const char* activationError() const { return activationError_; }
     const char* vehicleText() const { return vehicleText_; }
@@ -122,6 +125,12 @@ public:
     uint32_t getLastHeartbeat() const { return lastHeartbeat_; }
 
 private:
+    int32_t optionsBefore_ = -1, optionsVerified_ = -1, optionsDesired_ = -1;
+    uint8_t optionsType_ = 0, optionsReadAttempts_ = 0;
+    uint32_t optionsReadAt_ = 0;
+    bool beginMissionTransfer();
+    bool requestAutoOptions();
+    void handleParamValue(const uint8_t* data, size_t len);
     Activation activation_ = Activation::Idle;
     uint32_t activationAt_ = 0, customMode_ = 0;
     bool armed_ = false, commandAccepted_ = false;

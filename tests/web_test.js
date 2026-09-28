@@ -12,6 +12,8 @@ vm.runInContext('renderStatus(sample)',ctx);assert(nodes.sequence.textContent.in
 ctx.sample.mavlink={connected:true,heartbeatCount:5,rxBytes:100,customMode:3,armed:false};
 ctx.sample.activation={stage:'arming',busy:true,commandResult:0};
 vm.runInContext('renderStatus(sample)',ctx);assert(nodes.sequence.textContent.includes('ожидание ARM'));assert(nodes['btn-upload'].disabled);
+ctx.sample.activation={stage:'verifying_options',busy:true,autoOptionsBefore:6,autoOptionsVerified:-1};
+vm.runInContext('renderStatus(sample)',ctx);assert(nodes.sequence.textContent.includes('проверка AUTO_OPTIONS'));assert(nodes.sequence.textContent.includes('6 → ожидание'));assert(nodes['btn-upload'].disabled);
 ctx.sample.activation={stage:'error',busy:false,error:'ARM rejected',commandResult:2,vehicleText:'PreArm: GPS'};
 vm.runInContext('renderStatus(sample)',ctx);assert(nodes.sequence.textContent.includes('DENIED'));assert(nodes.sequence.textContent.includes('PreArm: GPS'));
 (async()=>{await vm.runInContext('refreshStatus()',ctx);assert(nodes['switch-state'].textContent.includes('неизвестно'));assert(nodes['btn-upload'].disabled);console.log('PASS: sequence UI, GPIO, AP countdown, stale state on HTTP failure');})().catch(e=>{console.error(e);process.exit(1)});

@@ -45,9 +45,10 @@ async function request(path, opts = {}) {
 function renderStatus(j) {
   $("switch-state").textContent = (j.switch.enabled ? "Включён" : "Выключен") + " · GPIO4 " + (j.switch.level ? "HIGH" : "LOW");
   const names = {waiting_mission:"Ожидание нового задания: питание выключено",waiting_heartbeat:"Питание включено: ожидание heartbeat полётника",uploading:"Загрузка миссии в полётник",complete:"Полётник подтвердил приём миссии",error:"Ошибка загрузки: питание остаётся включённым",cancelled:"Загрузка отменена: питание остаётся включённым"};
-  const activationNames = {idle:"ожидание приёма миссии",setting_auto:"ожидание AUTO",arming:"ожидание ARM",complete:"AUTO и ARM подтверждены",error:"ошибка",cancelled:"отменено"};
+  const activationNames = {reading_options:"чтение AUTO_OPTIONS",writing_options:"разрешение ARM в AUTO",verifying_options:"проверка AUTO_OPTIONS",idle:"ожидание приёма миссии",setting_auto:"ожидание AUTO",arming:"ожидание ARM",complete:"AUTO и ARM подтверждены",error:"ошибка",cancelled:"отменено"};
   const results = {0:"ACCEPTED",1:"TEMPORARILY_REJECTED",2:"DENIED",3:"UNSUPPORTED",4:"FAILED",5:"IN_PROGRESS",6:"CANCELLED"};
   $("sequence").textContent = [names[j.sequence.stage] || j.sequence.stage,
+    j.activation?.autoOptionsBefore >= 0 ? "AUTO_OPTIONS: " + j.activation.autoOptionsBefore + " → " + (j.activation.autoOptionsVerified >= 0 ? j.activation.autoOptionsVerified + " (проверено)" : "ожидание проверки") : "",
     "AUTO → ARM: " + (activationNames[j.activation?.stage] || "ожидание"),
     "Режим / ARM (heartbeat): " + (j.mavlink.connected ? j.mavlink.customMode + " / " + (j.mavlink.armed ? "ARMED" : "DISARMED") : "неизвестно"),
     j.activation?.error || "",
