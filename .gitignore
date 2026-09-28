@@ -1,0 +1,10 @@
+.deps/
+.tools/
+build/
+dist/
+__pycache__/
+*.log
+.DS_Store
+*.waypoints
+docs/PORT_PLAN.md
+firmware/modem_c3/data/config.json

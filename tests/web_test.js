@@ -1,0 +1,12 @@
+const fs=require('fs'),vm=require('vm'),assert=require('assert');
+const nodes={};let clock=0;
+const ctx={document:{getElementById:id=>nodes[id]??={textContent:'',disabled:false,addEventListener(){}}},performance:{now:()=>clock},AbortSignal,Date,URLSearchParams,setInterval(){},fetch:async()=>{throw Error('offline')}};
+vm.createContext(ctx);
+vm.runInContext(fs.readFileSync('firmware/modem_c3/data/app.js','utf8').replace(/init\(\);\s*$/,''),ctx);
+ctx.sample={switch:{enabled:false,level:0},sequence:{stage:'waiting_mission',acceptedThisBoot:false,poweredForMs:0},mavlink:{connected:false,heartbeatCount:0,rxBytes:0},wifi:{ssid:'modem_bridge',clients:1,dns_enabled:true,dns_name:'legion.modem',remaining_ms:300000},settings:{},freeHeap:100000};
+vm.runInContext('renderStatus(sample)',ctx);
+assert(nodes['switch-state'].textContent.includes('LOW'));assert(nodes['btn-upload'].disabled);assert(nodes['wifi-countdown'].textContent.includes('5:00'));
+clock=1000;vm.runInContext('updateCountdown()',ctx);assert(nodes['wifi-countdown'].textContent.includes('4:59'));
+ctx.sample.switch={enabled:true,level:1};ctx.sample.sequence={stage:'waiting_heartbeat',acceptedThisBoot:true,poweredForMs:31000,waitingLong:true};
+vm.runInContext('renderStatus(sample)',ctx);assert(nodes.sequence.textContent.includes('Ожидание продолжается'));assert(nodes['switch-state'].textContent.includes('HIGH'));
+(async()=>{await vm.runInContext('refreshStatus()',ctx);assert(nodes['switch-state'].textContent.includes('неизвестно'));assert(nodes['btn-upload'].disabled);console.log('PASS: sequence UI, GPIO, AP countdown, stale state on HTTP failure');})().catch(e=>{console.error(e);process.exit(1)});

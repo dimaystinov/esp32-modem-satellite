@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MAVLink WebUI</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main class="wrap">
+    <header class="top">
+      <h1>MAVLink WebUI</h1>
+      <div id="stamp" class="stamp">-</div>
+    </header>
+
+    <section class="actions">
+      <button id="btn-upload">Start Upload</button>
+      <button id="btn-stop">Stop Upload</button>
+      <button id="btn-echo">Echo: OFF</button>
+      <button id="btn-raw">Mission Raw</button>
+      <button id="btn-mission-clear" class="danger">Clear Mission</button>
+      <button id="btn-clear" class="danger">Clear Logs</button>
+    </section>
+
+    <section class="card">
+      <h2>Питание и выполнение задания</h2>
+      <p id="switch-state">Состояние неизвестно</p>
+      <pre id="sequence">Ожидание статуса</pre>
+      <p>Питание включается автоматически после сохранения нового задания от модема. GPIO4 показывает команду, а не измеренное напряжение.</p>
+    </section>
+    <section class="card">
+      <h2>Wi-Fi модема</h2>
+      <p><a href="http://192.168.0.4">http://192.168.0.4</a></p>
+      <pre id="wifi-details">Ожидание статуса</pre>
+      <p id="wifi-countdown">Wi-Fi доступен 5 минут после запуска ESP</p>
+      <p>Отключение Wi-Fi не отключает питание и не останавливает миссию. Для новой сессии Wi-Fi требуется перезапуск ESP, который также выключит GPIO4.</p>
+    </section>
+    <section class="grid">
+      <article class="card">
+        <h2>Status</h2>
+        <pre id="status">loading...</pre>
+      </article>
+
+      <article class="card">
+        <h2>Mission (Parsed JSON)</h2>
+        <pre id="mission">loading...</pre>
+      </article>
+
+      <article class="card">
+        <h2>Protocol</h2>
+        <pre id="protocol">loading...</pre>
+      </article>
+
+      <article class="card">
+        <h2>Mission Raw (ASCII + HEX)</h2>
+        <pre id="raw">empty</pre>
+      </article>
+    </section>
+
+    <section class="card logs">
+      <h2>Logs</h2>
+      <pre id="logs">loading...</pre>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
